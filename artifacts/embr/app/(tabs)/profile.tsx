@@ -57,7 +57,7 @@ export default function ProfileScreen() {
   const ListHeader = () => (
     <View>
       {/* Cover */}
-      <View style={{ height: COVER_H, position: 'relative' }}>
+      <View style={{ height: COVER_H, position: 'relative', overflow: 'visible' }}>
         {profile?.cover_url ? (
           <Image source={{ uri: profile.cover_url }} style={{ width: '100%', height: COVER_H }} contentFit="cover" />
         ) : (
