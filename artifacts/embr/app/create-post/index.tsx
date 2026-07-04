@@ -102,12 +102,20 @@ export default function CreatePostScreen() {
       const res = await fetch(uri);
       const blob = await res.blob();
       const ext = asset.type === 'video' ? 'mp4' : 'jpg';
-      const path = `${user?.id}/${Date.now()}.${ext}`;
+      const path = `${user?.id}/${Date.now()}_${Math.random().toString(36).substring(7)}.${ext}`;
+      
       const { error } = await supabase.storage.from('posts').upload(path, blob, { upsert: false });
-      if (error) return null;
+      if (error) {
+        console.error('Upload error:', error);
+        return null;
+      }
+      
       const { data } = supabase.storage.from('posts').getPublicUrl(path);
       return data.publicUrl;
-    } catch { return null; }
+    } catch (e) {
+      console.error('Media upload error:', e);
+      return null;
+    }
   };
 
   const handlePost = async () => {
@@ -115,9 +123,14 @@ export default function CreatePostScreen() {
       Alert.alert('Empty post', 'Add some text or media before posting.');
       return;
     }
-    if (!user?.id) return;
+    if (!user?.id) {
+      Alert.alert('Error', 'Not authenticated. Please log in again.');
+      return;
+    }
+    
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setPosting(true);
+    
     try {
       // Upload all media in parallel
       const mediaUrls = mediaAssets.length > 0
@@ -136,11 +149,11 @@ export default function CreatePostScreen() {
         visibility,
         feeling: feeling?.label ?? null,
         feeling_icon: feeling?.icon ?? null,
-        location_name: location,
+        location_name: location || null,
         tagged_users: taggedIds.length > 0 ? taggedIds : null,
         song_title: selectedSong?.title ?? null,
         song_artist: selectedSong?.artist ?? null,
-        hashtags,
+        hashtags: hashtags.length > 0 ? hashtags : null,
         post_type: 'original',
         view_count: 0,
         likes_count: 0,
@@ -148,22 +161,45 @@ export default function CreatePostScreen() {
         shares_count: 0,
         saves_count: 0,
         is_edited: false,
+        created_at: new Date().toISOString(),
       };
 
-      const { error } = await supabase.from('posts').insert(postData);
-      if (error) throw error;
+      console.log('Posting data:', postData);
+
+      const { data: insertedPost, error } = await supabase
+        .from('posts')
+        .insert([postData])
+        .select();
+      
+      if (error) {
+        console.error('Post insertion error:', error);
+        throw error;
+      }
+
+      if (!insertedPost || insertedPost.length === 0) {
+        throw new Error('Post was not created');
+      }
 
       // Update hashtag counts
       if (hashtags.length > 0) {
         for (const tag of hashtags) {
-          await supabase.rpc('increment_hashtag', { tag_name: tag });
+          try {
+            await supabase.rpc('increment_hashtag', { tag_name: tag });
+          } catch (e) {
+            console.warn('Hashtag increment failed:', e);
+          }
         }
       }
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      Alert.alert('Success', 'Post created successfully!');
       resetDraft();
+      setContent('');
+      setMediaAssets([]);
+      setSelectedBg(null);
       router.replace('/(tabs)/');
     } catch (e: any) {
+      console.error('Full error:', e);
       Alert.alert('Error', e.message ?? 'Failed to post. Please try again.');
     } finally {
       setPosting(false);
