@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "dhq1PXeIlHZYVScN8mYwo"
+uri = "file://embr-app.tar.gz"
+type = "unspecified"
+title = "Embr App — Source Code"
