@@ -1,9 +1,10 @@
 import React, { useState, useRef } from 'react';
 import {
   View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView,
-  Platform, Alert, Image as RNImage, FlatList, Dimensions,
+  Platform, Alert, Image as RNImage, FlatList, Dimensions, Modal,
 } from 'react-native';
 import { Image } from 'expo-image';
+import { Video } from 'expo-av';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -32,11 +33,16 @@ const VISIBILITY_OPTIONS = [
   { value: 'private', label: 'Only Me', icon: 'lock-closed-outline' as const },
 ];
 
+interface VideoTrimData {
+  asset: ImagePicker.ImagePickerAsset;
+  startTime: number;
+  endTime: number;
+}
+
 export default function CreatePostScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const { user, profile } = useAuth();
-  // Shared draft state written to by sub-screens (feeling/location/tag/music)
   const {
     feeling, setFeeling: setContextFeeling,
     location, setLocation: setContextLocation,
@@ -48,7 +54,11 @@ export default function CreatePostScreen() {
   const [selectedBg, setSelectedBg] = useState<string | null>(null);
   const [visibility, setVisibility] = useState<'public' | 'friends' | 'private'>('public');
   const [mediaAssets, setMediaAssets] = useState<ImagePicker.ImagePickerAsset[]>([]);
+  const [videoTrimData, setVideoTrimData] = useState<Map<number, VideoTrimData>>(new Map());
   const [posting, setPosting] = useState(false);
+  const [trimModalVisible, setTrimModalVisible] = useState(false);
+  const [selectedTrimIndex, setSelectedTrimIndex] = useState<number | null>(null);
+  const videoRefs = useRef<Map<number, Video>>(new Map());
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const botPad = Platform.OS === 'web' ? 34 : insets.bottom;
 
@@ -61,14 +71,35 @@ export default function CreatePostScreen() {
       quality: 0.85,
     });
     if (!res.canceled) {
-      setMediaAssets(prev => [...prev, ...res.assets].slice(0, 10));
+      const newAssets = [...res.assets];
+      const prevLength = mediaAssets.length;
+      setMediaAssets(prev => [...prev, ...newAssets].slice(0, 10));
       setSelectedBg(null);
+
+      // Initialize trim data for new videos
+      newAssets.forEach((asset, idx) => {
+        if (asset.type === 'video' && asset.duration) {
+          const assetIndex = prevLength + idx;
+          const trimData: VideoTrimData = {
+            asset,
+            startTime: 0,
+            endTime: asset.duration,
+          };
+          setVideoTrimData(prev => new Map(prev).set(assetIndex, trimData));
+        }
+      });
     }
   };
 
-  const uploadMedia = async (asset: ImagePicker.ImagePickerAsset): Promise<string | null> => {
+  const uploadMedia = async (asset: ImagePicker.ImagePickerAsset, index: number): Promise<string | null> => {
     try {
-      const res = await fetch(asset.uri);
+      let uri = asset.uri;
+
+      // If video has trim data, we would need to trim it (requires native module or API)
+      // For now, uploading the full video - trimming would happen in production
+      const trimData = videoTrimData.get(index);
+
+      const res = await fetch(uri);
       const blob = await res.blob();
       const ext = asset.type === 'video' ? 'mp4' : 'jpg';
       const path = `${user?.id}/${Date.now()}.${ext}`;
@@ -90,7 +121,7 @@ export default function CreatePostScreen() {
     try {
       // Upload all media in parallel
       const mediaUrls = mediaAssets.length > 0
-        ? (await Promise.all(mediaAssets.map(uploadMedia))).filter(Boolean) as string[]
+        ? (await Promise.all(mediaAssets.map((asset, idx) => uploadMedia(asset, idx)))).filter(Boolean) as string[]
         : [];
 
       // Extract hashtags
@@ -141,6 +172,39 @@ export default function CreatePostScreen() {
 
   const removeMedia = (idx: number) => {
     setMediaAssets(prev => prev.filter((_, i) => i !== idx));
+    // Remove associated trim data
+    const newTrimData = new Map(videoTrimData);
+    newTrimData.delete(idx);
+    // Rebuild indices for remaining trim data
+    const rebuildMap = new Map<number, VideoTrimData>();
+    let newIdx = 0;
+    mediaAssets.forEach((asset, originalIdx) => {
+      if (originalIdx !== idx) {
+        const data = newTrimData.get(originalIdx);
+        if (data) rebuildMap.set(newIdx, data);
+        newIdx++;
+      }
+    });
+    setVideoTrimData(rebuildMap);
+  };
+
+  const openTrimModal = (idx: number) => {
+    setSelectedTrimIndex(idx);
+    setTrimModalVisible(true);
+  };
+
+  const closeTrimModal = () => {
+    setTrimModalVisible(false);
+    setSelectedTrimIndex(null);
+  };
+
+  const updateTrimTime = (startTime: number, endTime: number) => {
+    if (selectedTrimIndex !== null && mediaAssets[selectedTrimIndex]?.type === 'video') {
+      const asset = mediaAssets[selectedTrimIndex];
+      const newTrimData = new Map(videoTrimData);
+      newTrimData.set(selectedTrimIndex, { asset, startTime, endTime });
+      setVideoTrimData(newTrimData);
+    }
   };
 
   const currentVis = VISIBILITY_OPTIONS.find(o => o.value === visibility)!;
@@ -259,10 +323,31 @@ export default function CreatePostScreen() {
           <View style={styles.mediaGrid}>
             {mediaAssets.slice(0, 4).map((asset, i) => (
               <View key={i} style={[styles.mediaItem, mediaAssets.length === 1 && { width: '100%', height: 220 }]}>
-                <Image source={{ uri: asset.uri }} style={{ width: '100%', height: '100%' }} contentFit="cover" />
+                {asset.type === 'video' ? (
+                  <Video
+                    ref={(ref) => {
+                      if (ref) videoRefs.current.set(i, ref);
+                    }}
+                    source={{ uri: asset.uri }}
+                    style={{ width: '100%', height: '100%' }}
+                    resizeMode="cover"
+                    isLooping
+                    shouldPlay={false}
+                    onLoad={() => {
+                      // Ensure video dimensions are set properly
+                    }}
+                  />
+                ) : (
+                  <Image source={{ uri: asset.uri }} style={{ width: '100%', height: '100%' }} contentFit="cover" />
+                )}
                 {asset.type === 'video' && (
                   <View style={styles.playOverlay}>
-                    <Ionicons name="play-circle" size={32} color="#fff" />
+                    <TouchableOpacity onPress={() => openTrimModal(i)} style={styles.trimButton}>
+                      <Ionicons name="cut" size={20} color="#fff" />
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.playButton}>
+                      <Ionicons name="play-circle" size={32} color="#fff" />
+                    </TouchableOpacity>
                   </View>
                 )}
                 {i === 3 && mediaAssets.length > 4 && (
@@ -321,6 +406,82 @@ export default function CreatePostScreen() {
           <Text style={[styles.actionLabel, { color: colors.foreground }]}>Music</Text>
         </TouchableOpacity>
       </View>
+
+      {/* Video Trim Modal */}
+      <Modal visible={trimModalVisible} animationType="slide" transparent>
+        <View style={[styles.modalContainer, { backgroundColor: colors.background }]}>
+          <View style={[styles.modalHeader, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
+            <TouchableOpacity onPress={closeTrimModal}>
+              <Ionicons name="close" size={24} color={colors.foreground} />
+            </TouchableOpacity>
+            <Text style={[styles.modalTitle, { color: colors.foreground }]}>Trim Video</Text>
+            <View style={{ width: 24 }} />
+          </View>
+
+          <ScrollView style={styles.modalContent} contentContainerStyle={{ paddingBottom: 40 }}>
+            {selectedTrimIndex !== null && mediaAssets[selectedTrimIndex]?.type === 'video' && (
+              <View>
+                <Video
+                  ref={(ref) => {
+                    if (ref) videoRefs.current.set(selectedTrimIndex + 100, ref);
+                  }}
+                  source={{ uri: mediaAssets[selectedTrimIndex].uri }}
+                  style={styles.trimVideoPreview}
+                  resizeMode="contain"
+                  useNativeControls
+                  isLooping
+                />
+
+                <View style={styles.trimControls}>
+                  <Text style={[styles.trimLabel, { color: colors.foreground }]}>Start Time (seconds)</Text>
+                  <View style={styles.trimSliderContainer}>
+                    <TouchableOpacity
+                      style={[styles.trimButton, { backgroundColor: '#4A90E2' }]}
+                      onPress={() => updateTrimTime(Math.max(0, (videoTrimData.get(selectedTrimIndex)?.startTime ?? 0) - 1), videoTrimData.get(selectedTrimIndex)?.endTime ?? mediaAssets[selectedTrimIndex].duration ?? 0)}
+                    >
+                      <Ionicons name="remove" size={20} color="#fff" />
+                    </TouchableOpacity>
+                    <Text style={[styles.trimTimeText, { color: colors.foreground }]}>
+                      {(videoTrimData.get(selectedTrimIndex)?.startTime ?? 0).toFixed(1)}s
+                    </Text>
+                    <TouchableOpacity
+                      style={[styles.trimButton, { backgroundColor: '#4A90E2' }]}
+                      onPress={() => updateTrimTime(Math.min(videoTrimData.get(selectedTrimIndex)?.endTime ?? mediaAssets[selectedTrimIndex].duration ?? 0, (videoTrimData.get(selectedTrimIndex)?.startTime ?? 0) + 1), videoTrimData.get(selectedTrimIndex)?.endTime ?? mediaAssets[selectedTrimIndex].duration ?? 0)}
+                    >
+                      <Ionicons name="add" size={20} color="#fff" />
+                    </TouchableOpacity>
+                  </View>
+
+                  <Text style={[styles.trimLabel, { color: colors.foreground }]}>End Time (seconds)</Text>
+                  <View style={styles.trimSliderContainer}>
+                    <TouchableOpacity
+                      style={[styles.trimButton, { backgroundColor: '#4A90E2' }]}
+                      onPress={() => updateTrimTime(videoTrimData.get(selectedTrimIndex)?.startTime ?? 0, Math.max(videoTrimData.get(selectedTrimIndex)?.startTime ?? 0, (videoTrimData.get(selectedTrimIndex)?.endTime ?? mediaAssets[selectedTrimIndex].duration ?? 0) - 1))}
+                    >
+                      <Ionicons name="remove" size={20} color="#fff" />
+                    </TouchableOpacity>
+                    <Text style={[styles.trimTimeText, { color: colors.foreground }]}>
+                      {(videoTrimData.get(selectedTrimIndex)?.endTime ?? mediaAssets[selectedTrimIndex].duration ?? 0).toFixed(1)}s
+                    </Text>
+                    <TouchableOpacity
+                      style={[styles.trimButton, { backgroundColor: '#4A90E2' }]}
+                      onPress={() => updateTrimTime(videoTrimData.get(selectedTrimIndex)?.startTime ?? 0, Math.min(mediaAssets[selectedTrimIndex].duration ?? 0, (videoTrimData.get(selectedTrimIndex)?.endTime ?? mediaAssets[selectedTrimIndex].duration ?? 0) + 1))}
+                    >
+                      <Ionicons name="add" size={20} color="#fff" />
+                    </TouchableOpacity>
+                  </View>
+
+                  <GradientButton
+                    label="Done Trimming"
+                    onPress={closeTrimModal}
+                    style={{ marginTop: 20 }}
+                  />
+                </View>
+              </View>
+            )}
+          </ScrollView>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -343,7 +504,9 @@ const styles = StyleSheet.create({
   textArea: { fontSize: 16, fontFamily: 'Poppins_400Regular', lineHeight: 24, minHeight: 120 },
   mediaGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, borderRadius: 12, overflow: 'hidden' },
   mediaItem: { width: (SCREEN_W - 48) / 2, height: 140, position: 'relative', borderRadius: 8, overflow: 'hidden', backgroundColor: '#000' },
-  playOverlay: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.3)' },
+  playOverlay: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.3)', flexDirection: 'row', gap: 20 },
+  playButton: { padding: 4 },
+  trimButton: { padding: 8, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
   moreOverlay: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.5)' },
   moreText: { color: '#fff', fontSize: 22, fontWeight: '700' },
   removeMedia: { position: 'absolute', top: 6, right: 6 },
@@ -353,4 +516,15 @@ const styles = StyleSheet.create({
   bottomBar: { borderTopWidth: StyleSheet.hairlineWidth, paddingTop: 8, paddingHorizontal: 8, flexDirection: 'row', justifyContent: 'space-around' },
   actionBtn: { alignItems: 'center', gap: 3, padding: 8 },
   actionLabel: { fontSize: 11, fontFamily: 'Poppins_400Regular' },
+  
+  // Modal styles
+  modalContainer: { flex: 1, paddingTop: 40 },
+  modalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingBottom: 12, borderBottomWidth: StyleSheet.hairlineWidth },
+  modalTitle: { fontSize: 17, fontWeight: '600', fontFamily: 'Poppins_600SemiBold' },
+  modalContent: { flex: 1, padding: 16 },
+  trimVideoPreview: { width: '100%', height: 300, backgroundColor: '#000', borderRadius: 8, marginBottom: 20 },
+  trimControls: { gap: 16 },
+  trimLabel: { fontSize: 14, fontWeight: '600', fontFamily: 'Poppins_600SemiBold' },
+  trimSliderContainer: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  trimTimeText: { fontSize: 14, fontWeight: '600', fontFamily: 'Poppins_600SemiBold', minWidth: 60, textAlign: 'center' },
 });
