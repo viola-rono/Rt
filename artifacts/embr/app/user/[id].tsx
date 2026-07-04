@@ -81,6 +81,9 @@ export default function UserProfileScreen() {
   };
 
   const COVER_H = 180;
+  const AVATAR_SIZE = 86;
+  const AVATAR_BORDER = 3;
+  const AVATAR_OFFSET = (AVATAR_SIZE + AVATAR_BORDER * 2) / 2; // Half of avatar size to overlap cover
 
   const ListHeader = () => (
     <View>
@@ -99,14 +102,14 @@ export default function UserProfileScreen() {
             <Ionicons name="ellipsis-vertical" size={20} color="#fff" />
           </TouchableOpacity>
         </View>
-        <View style={[styles.avatarWrap, { borderColor: colors.card }]}>
-          <UserAvatar uri={profile?.avatar_url} name={profile?.username} size={86} />
+        <View style={[styles.avatarWrap, { borderColor: colors.card, bottom: -AVATAR_OFFSET }]}>
+          <UserAvatar uri={profile?.avatar_url} name={profile?.username} size={AVATAR_SIZE} />
         </View>
       </View>
 
       {/* Info */}
-      <View style={[styles.infoSection, { backgroundColor: colors.card }]}>
-        <View style={{ paddingTop: 52, paddingHorizontal: 16 }}>
+      <View style={[styles.infoSection, { backgroundColor: colors.card, marginTop: AVATAR_OFFSET }]}>
+        <View style={{ paddingTop: AVATAR_OFFSET + 16, paddingHorizontal: 16 }}>
           {profileLoading ? (
             <View style={{ gap: 8, paddingBottom: 16 }}>
               <SkeletonBox width={160} height={20} borderRadius={8} />
@@ -189,7 +192,7 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   topBar: { position: 'absolute', left: 12, right: 12, flexDirection: 'row', justifyContent: 'space-between' },
   coverBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(0,0,0,0.3)', alignItems: 'center', justifyContent: 'center' },
-  avatarWrap: { position: 'absolute', bottom: -43, left: 20, borderRadius: 47, borderWidth: 3 },
+  avatarWrap: { position: 'absolute', left: 20, borderRadius: 50, borderWidth: 3 },
   infoSection: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 4, elevation: 2, paddingBottom: 16 },
   nameRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   name: { fontSize: 20, fontWeight: '700', fontFamily: 'Poppins_700Bold' },
