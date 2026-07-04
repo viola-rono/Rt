@@ -1,0 +1,4 @@
+- [Expo Router modal back-params](expo-router-modal-params.md) — router.setParams() after router.back() does NOT pass data to parent; use shared context instead.
+- [Supabase RLS message security](supabase-rls-messages.md) — messages INSERT must verify sender is a conversation participant, not just sender_id = auth.uid().
+- [Supabase RLS notifications security](supabase-rls-notifications.md) — notifications INSERT WITH CHECK (true) lets clients forge notifications; restrict to actor_id = auth.uid().
+- [Username login pattern](username-login-supabase.md) — store email in profiles table (set by handle_new_user trigger) to enable username→email lookup without querying auth.users from client.
